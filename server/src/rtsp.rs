@@ -172,9 +172,9 @@ async fn handle_rtsp_request(
         headers = ?RtspHeadersForLog(&request.headers),
         "rtsp request headers"
     );
-    if !session.suppress_placeholders && request.is_androidx_media3() {
-        session.suppress_placeholders = true;
-        debug!(%peer, "rtsp placeholders disabled for AndroidX Media3");
+    if !session.androidx_media3 && request.is_androidx_media3() {
+        session.androidx_media3 = true;
+        debug!(%peer, "rtsp AndroidX Media3 compatibility enabled");
     }
 
     match request.method.as_str() {
@@ -203,8 +203,9 @@ async fn handle_rtsp_request(
 
             session.key = Some(key.to_owned());
             let content_base = rtsp_content_base(&request.uri);
-            let video_fmtp = rtsp_video_fmtp(state, key).await;
-            let sdp = rtsp_sdp(&video_fmtp);
+            let (video_state, video_fmtp) = rtsp_video_description(state, key).await;
+            session.video_advertised = should_advertise_video(session.androidx_media3, video_state);
+            let sdp = rtsp_sdp(session.video_advertised.then_some(video_fmtp.as_ref()));
             write_rtsp_response(
                 writer,
                 "200 OK",
@@ -236,11 +237,19 @@ async fn handle_rtsp_request(
                 return Ok(false);
             }
 
+            let track = rtsp_track_from_uri(&request.uri);
+            if track == RtspTrack::Video && !session.video_track_allowed() {
+                write_rtsp_response(writer, "404 Not Found", cseq, &[], None).await?;
+                return Ok(false);
+            }
+
             if session.guard.is_none() {
                 match subscribe_listener(state, &key).await {
                     Ok(subscription) => {
                         session.audio_rx = Some(subscription.audio_rx);
-                        session.video_rx = Some(subscription.video_rx);
+                        if session.video_track_allowed() {
+                            session.video_rx = Some(subscription.video_rx);
+                        }
                         session.guard = Some(subscription.guard);
                     }
                     Err(status) => {
@@ -265,7 +274,6 @@ async fn handle_rtsp_request(
                 session.id = Some(format!("{id:016x}"));
             }
 
-            let track = rtsp_track_from_uri(&request.uri);
             let rtp_channel = select_rtsp_interleaved_channel(
                 session,
                 track,
@@ -385,7 +393,7 @@ async fn handle_rtsp_request(
                     channel,
                     rtp,
                     play_started_at,
-                    suppress_placeholders: session.suppress_placeholders,
+                    suppress_placeholders: session.androidx_media3,
                 })));
             }
         }
@@ -1227,8 +1235,10 @@ pub(crate) fn build_rtcp_sender_report(
     packet[2..4].copy_from_slice(&interleaved_len.to_be_bytes());
 }
 
-pub(crate) fn rtsp_sdp(video_fmtp: &str) -> String {
-    format!(
+pub(crate) fn rtsp_sdp(video_fmtp: Option<&str>) -> String {
+    let mut sdp = String::with_capacity(512 + video_fmtp.map_or(0, str::len));
+    let _ = write!(
+        sdp,
         "v=0\r\n\
          o=- 0 0 IN IP4 127.0.0.1\r\n\
          s= \r\n\
@@ -1239,12 +1249,18 @@ pub(crate) fn rtsp_sdp(video_fmtp: &str) -> String {
          m=audio 0 RTP/AVP {RTP_AUDIO_PAYLOAD_TYPE}\r\n\
          a=control:trackID=0\r\n\
          a=rtpmap:{RTP_AUDIO_PAYLOAD_TYPE} mpeg4-generic/{AAC_SAMPLE_RATE}/{AAC_CHANNELS}\r\n\
-         a=fmtp:{RTP_AUDIO_PAYLOAD_TYPE} config={AAC_AUDIO_SPECIFIC_CONFIG}; indexdeltalength=3; indexlength=3; mode=AAC-hbr; profile-level-id=1; sizelength=13; streamtype=5\r\n\
-         m=video 0 RTP/AVP {RTP_VIDEO_PAYLOAD_TYPE}\r\n\
-         a=control:trackID=1\r\n\
-         a=rtpmap:{RTP_VIDEO_PAYLOAD_TYPE} H264/{H264_CLOCK_RATE}\r\n\
-         a=fmtp:{RTP_VIDEO_PAYLOAD_TYPE} {video_fmtp}\r\n"
-    )
+         a=fmtp:{RTP_AUDIO_PAYLOAD_TYPE} config={AAC_AUDIO_SPECIFIC_CONFIG}; indexdeltalength=3; indexlength=3; mode=AAC-hbr; profile-level-id=1; sizelength=13; streamtype=5\r\n"
+    );
+    if let Some(video_fmtp) = video_fmtp {
+        let _ = write!(
+            sdp,
+            "m=video 0 RTP/AVP {RTP_VIDEO_PAYLOAD_TYPE}\r\n\
+             a=control:trackID=1\r\n\
+             a=rtpmap:{RTP_VIDEO_PAYLOAD_TYPE} H264/{H264_CLOCK_RATE}\r\n\
+             a=fmtp:{RTP_VIDEO_PAYLOAD_TYPE} {video_fmtp}\r\n"
+        );
+    }
+    sdp
 }
 
 fn rtsp_content_base(uri: &str) -> String {
@@ -1370,19 +1386,28 @@ pub(crate) fn channel_video_state(channel: &Channel) -> VideoStreamState {
     }
 }
 
-async fn rtsp_video_fmtp(state: &AppState, key: &str) -> Arc<str> {
+async fn rtsp_video_description(state: &AppState, key: &str) -> (VideoStreamState, Arc<str>) {
     let channel = state.channels.lock().await.get(key).cloned();
     let Some(channel) = channel else {
-        return state.placeholders.offline_fmtp.clone();
+        return (
+            VideoStreamState::Offline,
+            state.placeholders.offline_fmtp.clone(),
+        );
     };
 
-    match channel_video_state(&channel) {
+    let video_state = channel_video_state(&channel);
+    let fmtp = match video_state {
         VideoStreamState::Video => channel
             .video_fmtp()
             .unwrap_or_else(|| state.placeholders.audio_only_fmtp.clone()),
         VideoStreamState::AudioOnly => state.placeholders.audio_only_fmtp.clone(),
         VideoStreamState::Offline => state.placeholders.offline_fmtp.clone(),
-    }
+    };
+    (video_state, fmtp)
+}
+
+pub(crate) fn should_advertise_video(androidx_media3: bool, state: VideoStreamState) -> bool {
+    !androidx_media3 || state == VideoStreamState::Video
 }
 
 pub(crate) fn placeholder_access_unit(
@@ -1416,10 +1441,15 @@ pub(crate) struct RtspSession {
     pub(crate) video_channel: u8,
     pub(crate) audio_rtp: RtpState,
     pub(crate) video_rtp: RtpState,
-    pub(crate) suppress_placeholders: bool,
+    pub(crate) androidx_media3: bool,
+    pub(crate) video_advertised: bool,
 }
 
 impl RtspSession {
+    fn video_track_allowed(&self) -> bool {
+        !self.androidx_media3 || self.video_advertised
+    }
+
     fn stop(&mut self) {
         if let Some(task) = self.audio_rtp_task.take() {
             task.abort();

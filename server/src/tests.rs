@@ -9,6 +9,7 @@ use super::rtsp::{
     RtpState, RtpTimestampMapper, RtspSession, RtspTrack, VideoStreamState,
     build_rtcp_sender_report, channel_video_state, key_from_rtsp_uri, placeholder_access_unit,
     read_rtsp_request, rtcp_requests_keyframe, rtsp_sdp, select_rtsp_interleaved_channel,
+    should_advertise_video,
 };
 use super::websocket::{StreamerTextCommand, is_websocket_disconnect_noise, streamer_text_command};
 use super::*;
@@ -699,7 +700,7 @@ fn rtcp_sender_report_contains_counts_and_cname() {
 
 #[test]
 fn rtsp_sdp_describes_live_aggregate_session() {
-    let sdp = rtsp_sdp(TEST_VIDEO_FMTP);
+    let sdp = rtsp_sdp(Some(TEST_VIDEO_FMTP));
 
     assert!(sdp.contains("a=range:npt=now-\r\n"));
     assert!(sdp.contains("a=control:*\r\n"));
@@ -714,12 +715,32 @@ fn rtsp_sdp_describes_live_aggregate_session() {
 }
 
 #[test]
+fn rtsp_sdp_can_describe_audio_only_session() {
+    let sdp = rtsp_sdp(None);
+
+    assert!(sdp.contains("m=audio 0 RTP/AVP 96\r\n"));
+    assert!(sdp.contains("a=control:trackID=0\r\n"));
+    assert!(!sdp.contains("m=video"));
+    assert!(!sdp.contains("trackID=1"));
+    assert!(!sdp.contains("H264"));
+}
+
+#[test]
+fn androidx_media3_only_gets_video_track_for_active_video() {
+    assert!(!should_advertise_video(true, VideoStreamState::Offline));
+    assert!(!should_advertise_video(true, VideoStreamState::AudioOnly));
+    assert!(should_advertise_video(true, VideoStreamState::Video));
+    assert!(should_advertise_video(false, VideoStreamState::Offline));
+    assert!(should_advertise_video(false, VideoStreamState::AudioOnly));
+}
+
+#[test]
 fn streamer_video_flag_is_independent_from_rtsp_placeholder_track() {
     let mut config = test_config();
     config.video_enabled = false;
 
     assert!(streamer_hello_message(&config, 0, "rtspt://example.com").contains("\"video\":false"));
-    assert!(rtsp_sdp(TEST_VIDEO_FMTP).contains("m=video 0 RTP/AVP 97\r\n"));
+    assert!(rtsp_sdp(Some(TEST_VIDEO_FMTP)).contains("m=video 0 RTP/AVP 97\r\n"));
 }
 
 #[test]
