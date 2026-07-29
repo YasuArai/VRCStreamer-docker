@@ -172,9 +172,9 @@ async fn handle_rtsp_request(
         headers = ?RtspHeadersForLog(&request.headers),
         "rtsp request headers"
     );
-    if !session.suppress_placeholders && request.has_header_text(b"exoplayer") {
+    if !session.suppress_placeholders && request.is_androidx_media3() {
         session.suppress_placeholders = true;
-        debug!(%peer, "rtsp placeholders disabled for ExoPlayer");
+        debug!(%peer, "rtsp placeholders disabled for AndroidX Media3");
     }
 
     match request.method.as_str() {
@@ -1506,19 +1506,10 @@ impl RtspRequest {
             .map(|(_, value)| value.as_str())
     }
 
-    pub(crate) fn has_header_text(&self, needle: &[u8]) -> bool {
-        !needle.is_empty()
-            && self.headers.iter().any(|(name, value)| {
-                contains_ascii_case_insensitive(name.as_bytes(), needle)
-                    || contains_ascii_case_insensitive(value.as_bytes(), needle)
-            })
+    pub(crate) fn is_androidx_media3(&self) -> bool {
+        self.header("user-agent")
+            .is_some_and(|value| value.starts_with("AndroidXMedia3"))
     }
-}
-
-fn contains_ascii_case_insensitive(value: &[u8], needle: &[u8]) -> bool {
-    value
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 struct RtspHeadersForLog<'a>(&'a [(String, String)]);
