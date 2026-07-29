@@ -118,6 +118,20 @@ fn rtsp_parser_accepts_bounded_request_line() {
 }
 
 #[test]
+fn rtsp_request_detects_exoplayer_header_without_case_or_allocation() {
+    run_async_test(async {
+        let input = b"OPTIONS rtspt://127.0.0.1/abc RTSP/1.0\r\n\
+            CSeq: 1\r\nUser-Agent: AndroidXMedia3/1.8 ExoPlayerLib\r\n\r\n";
+        let mut reader = BufReader::new(&input[..]);
+        let request = read_rtsp_request(&mut reader).await.unwrap().unwrap();
+
+        assert!(request.has_header_text(b"exoplayer"));
+        assert!(request.has_header_text(b"ANDROIDXMEDIA3"));
+        assert!(!request.has_header_text(b"libvlc"));
+    });
+}
+
+#[test]
 fn rtsp_parser_rejects_unbounded_request_line() {
     run_async_test(async {
         let input = vec![b'A'; RTSP_MAX_LINE_BYTES + 1];

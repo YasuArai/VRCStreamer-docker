@@ -117,4 +117,4 @@ The values below match `.env.example` and the server's built-in defaults.
 | `RTSP_HANDSHAKE_TIMEOUT_SECS` | Seconds allowed for a new RTSP connection to complete `SETUP`<br>Default value: `30` |
 | `CHANNEL_BUFFER` | Shared frame queue per stream; larger values tolerate more listener jitter but retain more media in memory<br>Default value: `128` |
 | `STREAMER_IDLE_TIMEOUT_SECS` | Disconnect a streamer after this many seconds without a WebSocket message<br>Default value: `120` |
-| `RUST_LOG` | Server log level, such as `error`, `warn`, `info`, or `debug`<br>Default value: `warn` |
+| `RUST_LOG` | Server log level, such as `error`, `warn`, `info`, `debug`, or `trace`; `trace` also logs RTSP request headers with sensitive values redacted<br>Default value: `warn` |

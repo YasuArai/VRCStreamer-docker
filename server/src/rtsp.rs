@@ -1,5 +1,5 @@
 use std::{
-    fmt::Write as _,
+    fmt::{self, Write as _},
     io::ErrorKind,
     net::{IpAddr, SocketAddr},
     sync::{Arc, atomic::Ordering},
@@ -14,7 +14,7 @@ use tokio::{
     task::JoinHandle,
     time::{Instant as TokioInstant, sleep_until, timeout},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::limits::{ListenerIpGuard, try_acquire_listener_ip};
 use super::media::{AudioMessage, VideoMessage, find_h264_start_code, start_h264_payload};
@@ -165,6 +165,17 @@ async fn handle_rtsp_request(
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let cseq = request.header("cseq").unwrap_or("0");
     info!(%peer, method = %request.method, uri = %request.uri, "rtsp request");
+    trace!(
+        %peer,
+        method = %request.method,
+        uri = %request.uri,
+        headers = ?RtspHeadersForLog(&request.headers),
+        "rtsp request headers"
+    );
+    if !session.suppress_placeholders && request.has_header_text(b"exoplayer") {
+        session.suppress_placeholders = true;
+        debug!(%peer, "rtsp placeholders disabled for ExoPlayer");
+    }
 
     match request.method.as_str() {
         "OPTIONS" => {
@@ -374,6 +385,7 @@ async fn handle_rtsp_request(
                     channel,
                     rtp,
                     play_started_at,
+                    suppress_placeholders: session.suppress_placeholders,
                 })));
             }
         }
@@ -600,6 +612,7 @@ struct RtspVideoTask {
     channel: u8,
     rtp: RtpState,
     play_started_at: TokioInstant,
+    suppress_placeholders: bool,
 }
 
 async fn rtsp_video_rtp_task(task: RtspVideoTask) {
@@ -613,6 +626,7 @@ async fn rtsp_video_rtp_task(task: RtspVideoTask) {
         channel,
         mut rtp,
         play_started_at,
+        suppress_placeholders,
     } = task;
     let mut seen_keyframe = false;
     let mut last_state = None;
@@ -657,7 +671,9 @@ async fn rtsp_video_rtp_task(task: RtspVideoTask) {
             if current_state == VideoStreamState::Video {
                 request_video_keyframe(&stream);
             }
-            if let Some(frame) = placeholder_access_unit(&state.placeholders, current_state) {
+            if !suppress_placeholders
+                && let Some(frame) = placeholder_access_unit(&state.placeholders, current_state)
+            {
                 rtp.timestamp = video_clock.timestamp();
                 if let Err(error) = sender.send_h264_access_unit(&writer, frame, &mut rtp).await {
                     warn!(%peer, %key, %error, "rtsp video placeholder writer failed");
@@ -1400,6 +1416,7 @@ pub(crate) struct RtspSession {
     pub(crate) video_channel: u8,
     pub(crate) audio_rtp: RtpState,
     pub(crate) video_rtp: RtpState,
+    pub(crate) suppress_placeholders: bool,
 }
 
 impl RtspSession {
@@ -1487,6 +1504,39 @@ impl RtspRequest {
             .iter()
             .find(|(header_name, _)| header_name.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
+    }
+
+    pub(crate) fn has_header_text(&self, needle: &[u8]) -> bool {
+        !needle.is_empty()
+            && self.headers.iter().any(|(name, value)| {
+                contains_ascii_case_insensitive(name.as_bytes(), needle)
+                    || contains_ascii_case_insensitive(value.as_bytes(), needle)
+            })
+    }
+}
+
+fn contains_ascii_case_insensitive(value: &[u8], needle: &[u8]) -> bool {
+    value
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+struct RtspHeadersForLog<'a>(&'a [(String, String)]);
+
+impl fmt::Debug for RtspHeadersForLog<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut headers = formatter.debug_map();
+        for (name, value) in self.0 {
+            if matches!(
+                name.as_str(),
+                "authorization" | "proxy-authorization" | "cookie" | "set-cookie"
+            ) {
+                headers.entry(name, &"[redacted]");
+            } else {
+                headers.entry(name, value);
+            }
+        }
+        headers.finish()
     }
 }
 
