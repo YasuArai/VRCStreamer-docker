@@ -13,6 +13,83 @@ Docker setup for running [VRCStreamer](https://github.com/) in a container.
 
 This project is currently experimental and may not work out of the box.
 
+## Deployment
+
+### Prerequisites
+- Docker (Docker Desktop on Windows/Mac, or Docker Engine on Linux)
+- TLS certificate and key (Let's Encrypt for production, self-signed for local testing)
+
+### 1. Clone this repo
+
+```bash
+git clone https://github.com/<your-username>/VRCStreamer-docker.git
+cd VRCStreamer-docker
+```
+
+### 2. Configure environment
+
+```bash
+cp server/.env.example .env
+nano .env
+```
+
+Set `TLS_CERT_PATH` and `TLS_KEY_PATH` to the **in-container** paths you'll use below (e.g. `/certs/cert.pem` and `/certs/key.pem`), not paths on your host machine.
+
+### 3. Provide TLS certificates
+
+Place your certificate and key in a `certs/` folder next to the repo:
+```
+VRCStreamer-docker/
+├── certs/
+│ ├── cert.pem
+│ └── key.pem
+├── .env
+├── Dockerfile
+└── ...
+```
+For local testing without a real domain, generate a self-signed pair:
+
+```bash
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj "/CN=localhost"
+```
+
+### 4. Build the image
+
+```bash
+docker build -t vrcstreamer:latest .
+```
+
+### 5. Run the container
+
+```bash
+docker run -d \
+  --name vrcstreamer \
+  --env-file ./.env \
+  -p 443:443 \
+  -p 554:554 \
+  -v $(pwd)/certs:/certs:ro \
+  vrcstreamer:latest
+```
+
+### 6. Verify it's running
+
+```bash
+docker logs -f vrcstreamer
+```
+
+You should see the server listening on the API/WebSocket and RTSP ports with no errors. Test the API:
+
+```bash
+curl -kv https://localhost:443/
+```
+
+(`-k` skips certificate verification, needed for self-signed certs.)
+
+### Notes
+- Port 443 requires either running as root inside the container or granting `NET_BIND_SERVICE`, or fronting the container with a reverse proxy and binding VRCStreamer to a non-privileged port instead.
+- `.env` and `certs/` are mounted at runtime and are not baked into the image — keep them out of version control.
+
 ## Original README
 
 The original README.md is included below.
