@@ -1,6 +1,6 @@
 # VRCStreamer-docker
 
-Docker setup for running [VRCStreamer](https://github.com/) in a container.
+Docker setup for running [VRCStreamer](https://github.com/vard88508/VRCStreamer) in a container.
 
 ## Plans
 
