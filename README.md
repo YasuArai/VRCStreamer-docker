@@ -6,8 +6,8 @@ Docker setup for running [VRCStreamer](https://github.com/vard88508/VRCStreamer)
 
 - [ ] Make it fully work and verify that everything works correctly
 - [ ] Create a separate container for the frontend
-- [ ] Make it run on MikroTik devices (maybe)
-- [ ] Add automatic Docker image builds using GitHub Actions
+- [x] Make it run on MikroTik devices (maybe)
+- [x] Add automatic Docker image builds using GitHub Actions
 
 ## Status
 
