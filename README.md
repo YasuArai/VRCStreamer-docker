@@ -1,3 +1,24 @@
+# VRCStreamer-docker
+
+Docker setup for running [VRCStreamer](https://github.com/) in a container.
+
+## Plans
+
+- [ ] Make it fully work and verify that everything works correctly
+- [ ] Create a separate container for the frontend
+- [ ] Make it run on MikroTik devices (maybe)
+- [ ] Add automatic Docker image builds using GitHub Actions
+
+## Status
+
+This project is currently experimental and may not work out of the box.
+
+## Original README
+
+The original README.md is included below.
+
+---
+
 # VRCStreamer
 
 WebSocket-to-RTSP audio/video server for VRChat.
