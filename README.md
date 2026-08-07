@@ -22,7 +22,7 @@ This project is currently experimental and may not work out of the box.
 ### 1. Clone this repo
 
 ```bash
-git clone https://github.com/<your-username>/VRCStreamer-docker.git
+git clone https://github.com/YasuArai/VRCStreamer-docker.git
 cd VRCStreamer-docker
 ```
 
